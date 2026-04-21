@@ -40,9 +40,14 @@ cat <<EOF > autounattend.xml
             </AutoLogon>
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i E:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init-install.log' -Wait"</CommandLine>
-                    <Description>Install Cloudbase-Init from Secondary Drive</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\drivers\post-install-drivers.ps1"</CommandLine>
+                    <Description>Install VirtIO Drivers</Description>
                     <Order>1</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i C:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
+                    <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
+                    <Order>2</Order>
                 </SynchronousCommand>
             </FirstLogonCommands>
         </component>
@@ -64,7 +69,9 @@ qemu-system-x86_64.exe \
   -accel tcg -snapshot \
   -drive file="${VM_NAME}.qcow2",format=qcow2,if=virtio \
   -cdrom "$ISO_PATH" \
-  -drive file=virtio-win.iso,if=ide,media=cdrom,readonly=on \
+-drive file=virtio-win.iso,if=ide,media=cdrom,readonly=on \
+  -drive file=post-install-drivers.ps1,if=ide,media=cdrom,readonly=on \
+  -drive file=CloudbaseInitSetup.msi,if=ide,media=cdrom,readonly=on \
   -drive file=autounattend.xml,if=floppy,format=raw,readonly=on \
-  -net user \
-  -vga std -boot menu=on,order=d
+  -netdev user,id=net0 -device virtio-net,netdev=net0 \
+  -vga qxl -boot menu=on,order=d
