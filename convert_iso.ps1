@@ -19,8 +19,8 @@ if (!(Get-Command qemu-img -ErrorAction SilentlyContinue)) {
 }
 
 # --- 2. DOWNLOAD DRIVERS & CLOUDBASE-INIT ---
-$VirtioUrl = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso"
-$CloudInitUrl = "https://www.cloudbase.it/downloads/CloudbaseInitSetup_Stable_x64.msi"
+$VirtioUrl = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
+$CloudInitUrl = "https://github.com/cloudbase/cloudbase-init/releases/download/0.9.28/CloudbaseInitSetup_0.9.28_amd64.msi"
 
 if (!(Test-Path "virtio-win.iso")) { 
     Write-Host "Downloading VirtIO Drivers..." -ForegroundColor Cyan

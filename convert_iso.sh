@@ -18,8 +18,8 @@ echo "Installing QEMU and downloading required drivers..."
 winget install -e --id SoftwareFreedomConservancy.QEMU --accept-package-agreements --accept-source-agreements
 export PATH="$PATH:/c/Program Files/qemu"
 
-curl -L -o virtio-win.iso "https://fedorapeople.org"
-curl -L -o CloudbaseInitSetup.msi "https://www.cloudbase.it/downloads/CloudbaseInitSetup_Stable_x64.msi"
+curl -L -o virtio-win.iso "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
+curl -L -o CloudbaseInitSetup.msi "https://github.com/cloudbase/cloudbase-init/releases/download/0.9.28/CloudbaseInitSetup_0.9.28_amd64.msi"
 
 # 2. Create autounattend.xml (Sets Admin password & runs script)
 cat <<EOF > autounattend.xml
@@ -65,72 +65,6 @@ qemu-system-x86_64 \
   -cdrom "$ISO_PATH" \
   -drive file=virtio-win.iso,if=ide,media=cdrom,readonly=on \
   -fda autounattend.xml \
-  -drive file=CloudbaseInitSetup.msi,if=ide,media=cdrom,readonly=on \
+# CloudbaseInitSetup.msi available on host for FirstLogonCommands (no CD mount needed) \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -vga std -boot menu=on,order=d
-  
-# #!/bin/bash
-# # --- CONFIGURATION ---
-# VM_NAME="windows10_21h2-pcd9"
-# DISK_SIZE="120G"
-# ADMIN_PASS="Pasword123!"
-# ISO_NAME="windows10_21h2.iso"
-
-# # 1. Path Fix: Convert current directory to absolute Windows path
-# BASE_DIR=$(cygpath -w "$(pwd)")
-# ISO_PATH="$BASE_DIR\\$ISO_NAME"
-
-# if [ ! -f "$ISO_NAME" ]; then
-#     echo "ERROR: $ISO_NAME not found in $(pwd)"
-#     exit 1
-# fi
-
-# # 2. Setup Tools
-# winget install -e --id SoftwareFreedomConservancy.QEMU --accept-package-agreements
-# export PATH="$PATH:/c/Program Files/qemu"
-
-# # 3. Downloads (Direct Links)
-# [ ! -f "virtio-win.iso" ] && curl -L -o virtio-win.iso "https://fedorapeople.org"
-# [ ! -f "CloudbaseInitSetup.msi" ] && curl -L -o CloudbaseInitSetup.msi "https://cloudbase.it"
-
-# # 4. Automation XML
-# cat <<EOF > autounattend.xml
-# <?xml version="1.0" encoding="utf-8"?>
-# <unattend xmlns="urn:schemas-microsoft-com:unattend">
-#     <settings pass="oobeSystem">
-#         <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-#             <UserAccounts>
-#                 <AdministratorPassword><Value>$ADMIN_PASS</Value><PlainText>true</PlainText></AdministratorPassword>
-#             </UserAccounts>
-#             <AutoLogon>
-#                 <Password><Value>$ADMIN_PASS</Value><PlainText>true</PlainText></Password>
-#                 <Enabled>true</Enabled>
-#                 <Username>Administrator</Username>
-#             </AutoLogon>
-#             <FirstLogonCommands>
-#                 <SynchronousCommand wcm:action="add">
-#                     <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i E:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait"</CommandLine>
-#                     <Order>1</Order>
-#                 </SynchronousCommand>
-#             </FirstLogonCommands>
-#         </component>
-#     </settings>
-# </unattend>
-# EOF
-
-# # 5. Create and Start
-# qemu-img create -f qcow2 "${VM_NAME}.qcow2" "$DISK_SIZE"
-
-# echo "Attempting to launch with WHPX acceleration..."
-# # The -accel whpx,kernel-irqchip=off is standard, but we add 'tcg' as a fallback
-# qemu-system-x86_64 \
-#   -m 4G -smp 2 -cpu host \
-#   -accel whpx,kernel-irqchip=off -accel tcg \
-#   -drive file="${VM_NAME}.qcow2",format=qcow2,if=virtio \
-#   -cdrom "$ISO_PATH" \
-#   -drive file="$BASE_DIR\\virtio-win.iso",index=3,media=cdrom \
-#   -drive file="$BASE_DIR\\autounattend.xml",index=0,if=floppy \
-#   -drive file="$BASE_DIR\\CloudbaseInitSetup.msi",index=1,media=cdrom \
-#   -net nic,model=virtio -net user \
-  # -vga qxl -boot d
-

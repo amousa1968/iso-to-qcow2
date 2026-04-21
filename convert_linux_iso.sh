@@ -2,6 +2,12 @@
 # convert_linux_iso.sh - Convert Linux ISO to QCOW2 VM image
 # Run in Linux environment with KVM/QEMU installed
 # Usage: ./convert_linux_iso.sh [ubuntu-22.04 | rhel-9 | custom-iso.iso]
+# Multi-distro: rhel10/alma9/alma8/suse + more
+# Batch: sudo ./convert_linux_iso.sh rhel10 alma9 suse output → 3 QCOW2 
+
+
+
+
 
 set -e
 
@@ -22,18 +28,50 @@ command -v virt-install >/dev/null 2>&1 || sudo apt install -y virtinst libvirt-
 
 # --- 2. DOWNLOAD LINUX ISO (if not provided) ---
 if [[ ! -f "$ISO_PATH" ]]; then
-    case "$ISO_PATH" in
-        "ubuntu-22.04"|"ubuntu-22.04-server-amd64.iso")
+    case "${ISO_PATH,,}" in
+        ubuntu*)
             ISO_PATH="ubuntu-22.04.4-live-server-amd64.iso"
-            wget -O "$ISO_PATH" "https://releases.ubuntu.com/22.04.4/$ISO_PATH"
+            wget -O "$ISO_PATH" "https://releases.ubuntu.com/22.04.4/$ISO_PATH" || true
+            OS_INFO="ubuntu22.04"
+            USER="ubuntu"
             ;;
-        "rhel-9"|"rhel-9.3")
-            echo "For RHEL, provide your subscription ISO or use cloud image"
-            wget -O "$ISO_PATH" "https://cloud.redhat.com/openshift/install/rhel-9/rhel-9.3-x86_64-dvd.iso"
+        rhel10|almalinux10)
+            ISO_PATH="AlmaLinux-10.0-x86_64-boot.iso"
+            wget -O "$ISO_PATH" "https://repo.almalinux.org/almalinux/10/isos/x86_64/$ISO_PATH"
+            OS_INFO="rhel9.0"
+            USER="cloud-user"
+            ;;
+        alma9|rocky9)
+            ISO_PATH="AlmaLinux-9.3-x86_64-boot.iso"
+            wget -O "$ISO_PATH" "https://repo.almalinux.org/almalinux/9/isos/x86_64/$ISO_PATH"
+            OS_INFO="rhel9.0"
+            USER="cloud-user"
+            ;;
+        alma8|rocky8)
+            ISO_PATH="AlmaLinux-8.10-x86_64-boot.iso"
+            wget -O "$ISO_PATH" "https://repo.almalinux.org/almalinux/8/isos/x86_64/$ISO_PATH"
+            OS_INFO="rhel8.0"
+            USER="cloud-user"
+            ;;
+        sles|suse*)
+            ISO_PATH="SLE-15-SP6-Server-DVD-x86_64.iso"
+            # Manual download from SUSE (registration)
+            echo "Download $ISO_PATH from https://download.suse.com manually"
+            OS_INFO="sles15"
+            USER="root"
+            ;;
+        rhel*|centos*)
+            echo "RHEL/CentOS: Provide subscription ISO"
+            OS_INFO="rhel9.0"
+            USER="cloud-user"
             ;;
         *)
-            echo "Download your $ISO_PATH manually or specify full path"
-            exit 1
+            if [[ ! -f "$ISO_PATH" ]]; then
+                echo "ISO $ISO_PATH not found, download manually"
+                exit 1
+            fi
+            OS_INFO="generic"
+            USER="cloud-user"
             ;;
     esac
 fi
@@ -81,7 +119,7 @@ sudo virt-install \
   --name "${VM_NAME}-install" \
   --ram ${VM_RAM} \
   --vcpus ${VM_CPUS} \
-  --osinfo ubuntu22.04 \
+--osinfo ${OS_INFO:-ubuntu22.04} \
   --disk path="${VM_NAME}.qcow2",bus=virtio \
   --disk path="$ISO_PATH",device=cdrom \
   --disk path=seed.iso,device=cdrom \
