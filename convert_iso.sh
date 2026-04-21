@@ -11,7 +11,7 @@
 # --- CONFIGURATION ---
 VM_NAME="windows10_21h2-pcd9"
 ADMIN_PASS="Pasword123!"
-ISO_PATH="windows10_21h2.iso" # Ensure ISO is in the same folder
+ISO_PATH="windows10_21h2.iso" # Exact filename match
 
 # 1. Install QEMU & Download Files
 echo "Installing QEMU and downloading required drivers..."
@@ -59,12 +59,12 @@ qemu-img create -f raw scripts.img 1440K
 qemu-img create -f qcow2 "${VM_NAME}.qcow2" 120G
 
 echo "Launching VM. Windows will auto-detect autounattend.xml from the floppy drive."
-qemu-system-x86_64 \
-  -m 4096 -smp 2 -cpu qemu64 -accel tcg \
+qemu-system-x86_64.exe \
+  -m 6144 -smp 4 -cpu max \
+  -accel tcg -snapshot \
   -drive file="${VM_NAME}.qcow2",format=qcow2,if=virtio \
   -cdrom "$ISO_PATH" \
   -drive file=virtio-win.iso,if=ide,media=cdrom,readonly=on \
-  -fda autounattend.xml \
-# CloudbaseInitSetup.msi available on host for FirstLogonCommands (no CD mount needed) \
-  -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+  -drive file=autounattend.xml,if=floppy,format=raw,readonly=on \
+  -net user \
   -vga std -boot menu=on,order=d
