@@ -40,16 +40,25 @@ cat <<EOF > autounattend.xml
             </AutoLogon>
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add">
+                    <CommandLine>netsh interface set interface "Ethernet" admin=disable</CommandLine>
+                    <Description>Skip Network</Description>
+                    <Order>1</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\drivers\post-install-drivers.ps1"</CommandLine>
                     <Description>Install VirtIO Drivers</Description>
-                    <Order>1</Order>
+                    <Order>2</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i C:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
                     <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
-                    <Order>2</Order>
+                    <Order>3</Order>
                 </SynchronousCommand>
             </FirstLogonCommands>
+            <OOBE>
+                <SkipMachineOOBE>true</SkipMachineOOBE>
+                <SkipUserOOBE>true</SkipUserOOBE>
+            </OOBE>
         </component>
     </settings>
 </unattend>
