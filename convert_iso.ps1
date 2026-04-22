@@ -74,4 +74,3 @@ qemu-system-x86_64 `
   -drive file=CloudbaseInitSetup.msi,index=1,media=cdrom `
   -net nic,model=virtio -net user `
   -vga qxl -boot d
-  

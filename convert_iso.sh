@@ -27,6 +27,74 @@ curl -L -o CloudbaseInitSetup.msi "https://github.com/cloudbase/cloudbase-init/r
 cat <<'EOF' > autounattend.xml
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
+    <settings pass="windowsPE">
+        <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <SetupUILanguage>
+                <UILanguage>en-US</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>en-US</InputLocale>
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+        <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <DiskConfiguration>
+                <Disk wcm:action="add">
+                    <DiskID>0</DiskID>
+                    <WillWipeDisk>true</WillWipeDisk>
+                    <CreatePartitions>
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>EFI</Type>
+                            <Size>260</Size>
+                        </CreatePartition>
+                        <CreatePartition wcm:action="add">
+                            <Order>2</Order>
+                            <Type>MSR</Type>
+                            <Size>128</Size>
+                        </CreatePartition>
+                        <CreatePartition wcm:action="add">
+                            <Order>3</Order>
+                            <Type>Primary</Type>
+                        </CreatePartition>
+                    </CreatePartitions>
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Format>FAT32</Format>
+                            <Label>System</Label>
+                            <Letter> S </Letter>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>2</Order>
+                            <PartitionID>2</PartitionID>
+                            <Format winDir="true">NTFS</Format>
+                            <Label>Windows</Label>
+                            <Letter>C</Letter>
+                        </ModifyPartition>
+                    </ModifyPartitions>
+                </Disk>
+            </DiskConfiguration>
+            <ImageInstall>
+                <OSImage>
+                    <InstallTo>
+                        <DiskID>0</DiskID>
+                        <PartitionID>2</PartitionID>
+                    </InstallTo>
+                </OSImage>
+            </ImageInstall>
+            <UserData>
+                <AcceptEula>true</AcceptEula>
+                <FullName>Administrator</FullName>
+                <Organization />
+                <ProductKey>
+                    <Key />
+                    <WillShowUI>OnError</WillShowUI>
+                </ProductKey>
+            </UserData>
+        </component>
+    </settings>
     <settings pass="oobeSystem">
         <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
             <UserAccounts>
@@ -39,32 +107,35 @@ cat <<'EOF' > autounattend.xml
                 <Password><Value>$ADMIN_PASS</Value><PlainText>true</PlainText></Password>
                 <Enabled>true</Enabled>
                 <Username>Administrator</Username>
+                <LogonCount>1</LogonCount>
             </AutoLogon>
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>netsh interface set interface "Ethernet" admin=disable</CommandLine>
-                    <Description>Skip Network</Description>
                     <Order>1</Order>
+                    <Description>Disable Network</Description>
+                    <CommandLine>netsh interface set interface "Ethernet" admin=disable</CommandLine>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -File "D:\\post-install-drivers.ps1"</CommandLine>
-                    <Description>Install VirtIO Drivers</Description>
                     <Order>2</Order>
+                    <Description>Install VirtIO Drivers</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -File "D:\post-install-drivers.ps1"</CommandLine>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\\cleanup-for-sysprep.ps1"</CommandLine>
-                    <Description>Cleanup for Sysprep</Description>
                     <Order>3</Order>
+                    <Description>Cleanup for Sysprep</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\cleanup-for-sysprep.ps1"</CommandLine>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i E:\\CloudbaseInitSetup.msi /qn /l*v C:\\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
-                    <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
                     <Order>4</Order>
+                    <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i E:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
                 </SynchronousCommand>
             </FirstLogonCommands>
             <OOBE>
                 <SkipMachineOOBE>true</SkipMachineOOBE>
                 <SkipUserOOBE>true</SkipUserOOBE>
+                <SkipNetworking>true</SkipNetworking>
+                <ProtectYourPC>3</ProtectYourPC>
             </OOBE>
         </component>
     </settings>

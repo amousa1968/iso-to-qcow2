@@ -6,9 +6,6 @@
 # Batch: sudo ./convert_linux_iso.sh rhel10 alma9 suse output → 3 QCOW2 
 
 
-
-
-
 set -e
 
 # --- CONFIGURATION ---
