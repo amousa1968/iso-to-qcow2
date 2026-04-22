@@ -1,6 +1,8 @@
 # Execution Key Details
 # Administrator Password: The script automatically injects Pasword123!into the autounattend.xml.
-# Cloud-Init Solution: The script mounts the CloudbaseInitSetup.msi as a secondary CD drive. The FirstLogonCommands in the XML triggers a PowerShell command to install it silently (/qn) upon the first login.
+# D: → virtio-win.iso (drivers)
+# E: → post-install-drivers.ps1  
+# F: → CloudbaseInitSetup.msi (**F:\CloudbaseInitSetup.msi**)
 # Driver Loading: You must still manually click "Load Driver" during the "Where to install?" phase of the Windows GUI to select the VirtIO SCSI driver.
 # Final Step: After the VM finishes the automated install and logs you in, Cloudbase-Init will be installed. You should manually open the Cloudbase-Init configuration tool in the VM, select "Run Sysprep", and click Finishto finalize your PCD9 image.
 # The PowerShell version ensures native handling of Windows permissions, allows for faster execution using the Windows Hypervisor Platform (WHPX), and automates the creation of an autounattend.xml to handle your local admin and Cloudbase-Init setup.
@@ -69,18 +71,33 @@ echo "Preparing automation drive..."
 qemu-img create -f raw scripts.img 1440K
 # Note: On Windows Git Bash, we use -fda in QEMU to point to the XML directly or a virtual floppy.
 
-# 4. Create and Start the VM
+# 4. Interactive VM Install (Manual: Load VirtIO disk driver during partition screen)
 qemu-img create -f qcow2 "${VM_NAME}.qcow2" 120G
 
-echo "Launching VM. Windows will auto-detect autounattend.xml from the floppy drive."
+echo "=== MANUAL STEPS ==="
+echo "1. During 'Where to install Windows' → Load Driver → VirtIO CD (D:) → viostor\\w10\\amd64"
+echo "2. VM auto-boots → login Administrator/Pasword123!"
+echo "3. Cloudbase Config → Run Sysprep → Shutdown"
+
+echo "Launching VM..."
 qemu-system-x86_64.exe \
   -m 6144 -smp 4 -cpu max \
   -accel tcg -snapshot \
   -drive file="${VM_NAME}.qcow2",format=qcow2,if=virtio \
   -cdrom "$ISO_PATH" \
--drive file=virtio-win.iso,if=ide,media=cdrom,readonly=on \
-  -drive file=post-install-drivers.ps1,if=ide,media=cdrom,readonly=on \
-  -drive file=CloudbaseInitSetup.msi,if=ide,media=cdrom,readonly=on \
-  -drive file=autounattend.xml,if=floppy,format=raw,readonly=on \
-  -netdev user,id=net0 -device virtio-net,netdev=net0 \
+  -drive file="virtio-win.iso",index=2,if=none,id=drive-virtio,readonly=on,media=cdrom \
+  -device ide-cd,bus=ide.1,drive=drive-virtio \
+  -drive file="post-install-drivers.ps1",index=3,if=none,id=drive-drivers,readonly=on,media=cdrom \
+  -device ide-cd,bus=ide.2,drive=drive-drivers \
+  -drive file="CloudbaseInitSetup.msi",index=4,if=none,id=drive-cloudbase,readonly=on,media=cdrom \
+  -device ide-cd,bus=ide.3,drive=drive-cloudbase \
+  -drive file="autounattend.xml",if=floppy,format=raw,readonly=on \
+  -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -vga qxl -boot menu=on,order=d
+
+echo ""
+echo "=== POST-SYSPREP GOLDEN IMAGE ==="
+echo "1. Copy ${VM_NAME}.qcow2 → /pcd9/inventories/windows10_21h2-pcd9.qcow2"
+echo "2. Compress: qemu-img convert -O qcow2 -c ${VM_NAME}.qcow2 golden-image.qcow2"
+echo "3. Upload to image registry" 
+read -p "Press Enter after sysprep complete..."
