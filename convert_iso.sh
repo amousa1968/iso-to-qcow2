@@ -24,7 +24,7 @@ curl -L -o virtio-win.iso "https://fedorapeople.org/groups/virt/virtio-win/direc
 curl -L -o CloudbaseInitSetup.msi "https://github.com/cloudbase/cloudbase-init/releases/download/0.9.28/CloudbaseInitSetup_0.9.28_amd64.msi"
 
 # 2. Create autounattend.xml (Sets Admin password & runs script)
-cat <<EOF > autounattend.xml
+cat <<'EOF' > autounattend.xml
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
     <settings pass="oobeSystem">
@@ -47,14 +47,19 @@ cat <<EOF > autounattend.xml
                     <Order>1</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\drivers\post-install-drivers.ps1"</CommandLine>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -File "D:\\post-install-drivers.ps1"</CommandLine>
                     <Description>Install VirtIO Drivers</Description>
                     <Order>2</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i C:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
-                    <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\\cleanup-for-sysprep.ps1"</CommandLine>
+                    <Description>Cleanup for Sysprep</Description>
                     <Order>3</Order>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i E:\\CloudbaseInitSetup.msi /qn /l*v C:\\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
+                    <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
+                    <Order>4</Order>
                 </SynchronousCommand>
             </FirstLogonCommands>
             <OOBE>
@@ -66,38 +71,41 @@ cat <<EOF > autounattend.xml
 </unattend>
 EOF
 
+# Copy scripts to C:\ for VM access (via host mount or manual)
+powershell -Command "Copy-Item 'post-install-drivers.ps1', 'cleanup-for-sysprep.ps1' -Destination 'C:\temp' -Force" 2>/dev/null || echo "Manual copy PS1 to C:\temp if needed"
+
 # 3. Create Floppy Image for autounattend.xml (QEMU picks this up as the answer file)
 echo "Preparing automation drive..."
-qemu-img create -f raw scripts.img 1440K
-# Note: On Windows Git Bash, we use -fda in QEMU to point to the XML directly or a virtual floppy.
+# 3. Create floppy image for autounattend.xml properly for Windows QEMU
+echo "Creating floppy image for autounattend.xml (raw)..."
+qemu-img create -f raw floppy.img 1M
+(echo -ne '\032\001BOOT\000'; cat autounattend.xml) > temp_floppy.bin
+dd if=temp_floppy.bin of=floppy.img bs=512 count=2880 conv=notrunc 2>/dev/null || cat autounattend.xml > floppy.img
 
-# 4. Interactive VM Install (Manual: Load VirtIO disk driver during partition screen)
+# 4. Create QCOW2 disk
 qemu-img create -f qcow2 "${VM_NAME}.qcow2" 120G
 
 echo "=== MANUAL STEPS ==="
-echo "1. During 'Where to install Windows' → Load Driver → VirtIO CD (D:) → viostor\\w10\\amd64"
-echo "2. VM auto-boots → login Administrator/Pasword123!"
-echo "3. Cloudbase Config → Run Sysprep → Shutdown"
+echo "1. During 'Where to install Windows' → Load Driver → VirtIO CD (D:) → viostor\w10\amd64"
+echo "2. VM auto-boots → login Administrator/Password123! (runs cleanup, drivers, Cloudbase automatically)"
+echo "3. Open Cloudbase-Init Config Tool → Generate Password → Run Sysprep → Finish → Shutdown"
 
-echo "Launching VM..."
+echo "Launching VM ..."
 qemu-system-x86_64.exe \
   -m 6144 -smp 4 -cpu max \
-  -accel tcg -snapshot \
+  -accel tcg \
   -drive file="${VM_NAME}.qcow2",format=qcow2,if=virtio \
-  -cdrom "$ISO_PATH" \
-  -drive file="virtio-win.iso",index=2,if=none,id=drive-virtio,readonly=on,media=cdrom \
-  -device ide-cd,bus=ide.1,drive=drive-virtio \
-  -drive file="post-install-drivers.ps1",index=3,if=none,id=drive-drivers,readonly=on,media=cdrom \
-  -device ide-cd,bus=ide.2,drive=drive-drivers \
-  -drive file="CloudbaseInitSetup.msi",index=4,if=none,id=drive-cloudbase,readonly=on,media=cdrom \
-  -device ide-cd,bus=ide.3,drive=drive-cloudbase \
-  -drive file="autounattend.xml",if=floppy,format=raw,readonly=on \
-  -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-  -vga qxl -boot menu=on,order=d
+  -drive file="$ISO_PATH",media=cdrom \
+  -drive file="virtio-win.iso",media=cdrom \
+  -drive file="CloudbaseInitSetup.msi",media=cdrom \
+  -drive file="floppy.img",format=raw,if=floppy \
+  -net nic,model=virtio -net user \
+  -vga std \
+  -boot menu=on,order=d
 
 echo ""
 echo "=== POST-SYSPREP GOLDEN IMAGE ==="
-echo "1. Copy ${VM_NAME}.qcow2 → /pcd9/inventories/windows10_21h2-pcd9.qcow2"
+echo "1. Copy ${VM_NAME}.qcow2 to your target inventory"
 echo "2. Compress: qemu-img convert -O qcow2 -c ${VM_NAME}.qcow2 golden-image.qcow2"
-echo "3. Upload to image registry" 
-read -p "Press Enter after sysprep complete..."
+echo "3. Upload to image registry"
+echo "VM is now running. Complete sysprep inside VM, then shutdown."
