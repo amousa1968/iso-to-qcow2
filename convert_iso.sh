@@ -112,30 +112,41 @@ cat <<'EOF' > autounattend.xml
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add">
                     <Order>1</Order>
-                    <Description>Disable Network</Description>
-                    <CommandLine>netsh interface set interface "Ethernet" admin=disable</CommandLine>
+                    <Description>Install VirtIO Network Driver</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "pnputil /add-driver 'D:\NetKVM\w10\amd64\netkvm.inf' /install; Start-Sleep -Seconds 5; Enable-NetAdapter -Name 'Ethernet' -Confirm:$false -ErrorAction SilentlyContinue"</CommandLine>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <Order>2</Order>
-                    <Description>Install VirtIO Drivers</Description>
-                    <CommandLine>powershell -ExecutionPolicy Bypass -File "D:\post-install-drivers.ps1"</CommandLine>
+                    <Description>Install VirtIO Storage Drivers</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "pnputil /add-driver 'D:\viostor\w10\amd64\viostor.inf' /install; pnputil /add-driver 'D:\vioscsi\w10\amd64\vioscsi.inf' /install; pnputil /add-driver 'D:\Balloon\w10\amd64\Balloon.inf' /install; pnputil /add-driver 'D:\qxldod\w10\amd64\qxldod.inf' /install"</CommandLine>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <Order>3</Order>
+                    <Description>Download and Install Cloudbase-Init</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/cloudbase/cloudbase-init/releases/download/0.9.28/CloudbaseInitSetup_0.9.28_amd64.msi' -OutFile 'C:\Windows\Temp\CloudbaseInitSetup.msi'; Start-Process msiexec.exe -ArgumentList '/i C:\Windows\Temp\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait"</CommandLine>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>4</Order>
                     <Description>Cleanup for Sysprep</Description>
                     <CommandLine>powershell -ExecutionPolicy Bypass -File "C:\cleanup-for-sysprep.ps1"</CommandLine>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <Order>4</Order>
-                    <Description>Cloudbase + Firewall OFF + WinRM ON</Description>
-                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Start-Process msiexec.exe -ArgumentList '/i E:\CloudbaseInitSetup.msi /qn /l*v C:\cloudbase-init.log' -Wait; netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
+                    <Order>5</Order>
+                    <Description>Firewall OFF + WinRM ON</Description>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "netsh advfirewall set allprofiles state off; winrm quickconfig -quiet; Enable-PSRemoting -Force"</CommandLine>
                 </SynchronousCommand>
             </FirstLogonCommands>
             <OOBE>
                 <SkipMachineOOBE>true</SkipMachineOOBE>
                 <SkipUserOOBE>true</SkipUserOOBE>
                 <SkipNetworking>true</SkipNetworking>
+                <SkipEULA>true</SkipEULA>
                 <ProtectYourPC>3</ProtectYourPC>
+                <HideEULAPage>true</HideEULAPage>
+                <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <NetworkLocation>Other</NetworkLocation>
             </OOBE>
         </component>
     </settings>
@@ -163,12 +174,11 @@ echo "3. Open Cloudbase-Init Config Tool → Generate Password → Run Sysprep �
 
 echo "Launching VM ..."
 qemu-system-x86_64.exe \
-  -m 6144 -smp 4 -cpu max \
+  -m 8192 -smp 6 -cpu max \
   -accel tcg \
   -drive file="${VM_NAME}.qcow2",format=qcow2,if=virtio \
   -drive file="$ISO_PATH",media=cdrom \
   -drive file="virtio-win.iso",media=cdrom \
-  -drive file="CloudbaseInitSetup.msi",media=cdrom \
   -drive file="floppy.img",format=raw,if=floppy \
   -net nic,model=virtio -net user \
   -vga std \
