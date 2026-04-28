@@ -1,5 +1,5 @@
 #!/bin/bash
-# build_win10_qcow2.sh - Fixed for Sysprep with Windows Update disabled
+# build_win10_qcow2.sh - Bypasses Microsoft account requirement
 
 set -euo pipefail
 
@@ -51,9 +51,9 @@ fi
 echo "Creating QCOW2 disk: $OUTPUT_QCOW2 ($DISK_SIZE)"
 qemu-img create -f qcow2 "$OUTPUT_QCOW2" "$DISK_SIZE"
 
-# ----- 2. Generate the PowerShell script with Windows Update disabled -----
+# ----- 2. Generate the PowerShell script -----
 cat > "$POWERSHELL_SCRIPT" << 'EOF'
-# install-cloudbase.ps1 - First boot script with Windows Update disabled
+# install-cloudbase.ps1 - First boot script
 
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "Starting Windows Image Preparation" -ForegroundColor Cyan
@@ -63,12 +63,12 @@ Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "Disabling Windows Update services..." -ForegroundColor Yellow
 
 $servicesToDisable = @(
-    "wuauserv",      # Windows Update
-    "UsoSvc",        # Update Orchestrator Service
-    "WaaSMedicSvc",  # Windows Update Medic Service
-    "bits",          # Background Intelligent Transfer Service
-    "DoSvc",         # Delivery Optimization
-    "TrustedInstaller" # Windows Modules Installer
+    "wuauserv",
+    "UsoSvc",
+    "WaaSMedicSvc",
+    "bits",
+    "DoSvc",
+    "TrustedInstaller"
 )
 
 foreach ($service in $servicesToDisable) {
@@ -110,6 +110,9 @@ Start-Sleep -Seconds 5
 Write-Host "Configuring Administrator account..." -ForegroundColor Yellow
 net user Administrator "Password123!" /logonpasswordchg:no 2>$null
 wmic UserAccount where "Name='Administrator'" set PasswordExpires=False 2>$null
+
+# Enable Administrator account (in case it's disabled)
+net user Administrator /active:yes 2>$null
 
 # ----- Configure WinRM -----
 Write-Host "Configuring WinRM..." -ForegroundColor Yellow
@@ -164,9 +167,8 @@ Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "Running Sysprep to generalize the image..." -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
-# Use Sysprep with explicit error handling
 $sysprepPath = "$env:SystemRoot\System32\Sysprep\sysprep.exe"
-$sysprepArgs = "/generalize /oobe /shutdown /quiet /unattend:C:\Windows\System32\Sysprep\unattend.xml"
+$sysprepArgs = "/generalize /oobe /shutdown /quiet"
 
 try {
     Write-Host "Executing: $sysprepPath $sysprepArgs" -ForegroundColor Yellow
@@ -177,7 +179,6 @@ try {
     } else {
         Write-Host "Sysprep exited with code: $($process.ExitCode)" -ForegroundColor Red
         
-        # Check Sysprep logs
         $sysprepLog = "$env:SystemRoot\System32\Sysprep\Panther\setupact.log"
         if (Test-Path $sysprepLog) {
             Write-Host "Last 20 lines of Sysprep log:" -ForegroundColor Yellow
@@ -191,7 +192,7 @@ try {
 Write-Host "VM will now shut down." -ForegroundColor Green
 EOF
 
-# ----- 3. Generate autounattend.xml with Sysprep answer file -----
+# ----- 3. Generate autounattend.xml with Microsoft account bypass -----
 cat > "$ANSWERFILE" << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -258,6 +259,11 @@ cat > "$ANSWERFILE" << 'EOF'
                 <HideEULAPage>true</HideEULAPage>
                 <SkipMachineOOBE>true</SkipMachineOOBE>
                 <SkipUserOOBE>true</SkipUserOOBE>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideLocalAccountScreen>false</HideLocalAccountScreen>
+                <ProtectYourPC>1</ProtectYourPC>
+                <NetworkLocation>Work</NetworkLocation>
             </OOBE>
             <AutoLogon>
                 <Enabled>true</Enabled>
@@ -268,11 +274,33 @@ cat > "$ANSWERFILE" << 'EOF'
                 </Password>
                 <LogonCount>2</LogonCount>
             </AutoLogon>
+            <UserAccounts>
+                <AdministratorPassword>
+                    <Value>Password123!</Value>
+                    <PlainText>true</PlainText>
+                </AdministratorPassword>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add">
+                        <Password>
+                            <Value>Password123!</Value>
+                            <PlainText>true</PlainText>
+                        </Password>
+                        <Group>Administrators</Group>
+                        <DisplayName>Administrator</DisplayName>
+                        <Name>Administrator</Name>
+                        <Description>Local Administrator</Description>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
             <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>cmd.exe /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableFirstLogonAnimation /t REG_DWORD /d 0 /f</CommandLine>
+                    <Order>1</Order>
+                </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell.exe -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\install-cloudbase.ps1"</CommandLine>
                     <Description>Install Cloudbase-Init and Sysprep</Description>
-                    <Order>1</Order>
+                    <Order>2</Order>
                 </SynchronousCommand>
             </FirstLogonCommands>
         </component>
@@ -291,40 +319,23 @@ cat > "$ANSWERFILE" << 'EOF'
                     <Order>2</Order>
                     <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" /v AUOptions /t REG_DWORD /d 1 /f</Path>
                 </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>3</Order>
+                    <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f</Path>
+                </RunSynchronousCommand>
             </RunSynchronous>
         </component>
-    </settings>
-</unattend>
-EOF
-
-# Create a separate Sysprep unattend file for the Sysprep step
-cat > "$SCRIPT_DIR/sysprep-unattend.xml" << 'EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
-    <settings pass="generalize">
-        <component name="Microsoft-Windows-Security-SPP" processorArchitecture="amd64">
-            <SkipRearm>1</SkipRearm>
-        </component>
-    </settings>
-    <settings pass="oobeSystem">
         <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64">
-            <OOBE>
-                <SkipMachineOOBE>true</SkipMachineOOBE>
-                <SkipUserOOBE>true</SkipUserOOBE>
-            </OOBE>
+            <ComputerName>WIN-TEMPLATE</ComputerName>
         </component>
     </settings>
 </unattend>
 EOF
-
-# Copy sysprep-unattend.xml to the answer ISO location
-cp "$SCRIPT_DIR/sysprep-unattend.xml" "$SCRIPT_DIR/"
 
 # Convert to Windows line endings
 sed -i 's/$/\r/' "$ANSWERFILE" 2>/dev/null || echo ""
-sed -i 's/$/\r/' "$SCRIPT_DIR/sysprep-unattend.xml" 2>/dev/null || echo ""
 
-# ----- 4. Create answer ISO with both files -----
+# ----- 4. Create answer ISO -----
 echo "Creating answer ISO..."
 ANSWER_ISO="$WORK_DIR/answer.iso"
 powershell.exe -Command "
@@ -334,15 +345,10 @@ powershell.exe -Command "
     \$iso.VolumeName = 'AUTORUN'
     \$root = \$iso.Root
     \$root.AddFile('\$sourceFolder\autounattend.xml', '\$sourceFolder\autounattend.xml')
-    \$root.AddFile('\$sourceFolder\sysprep-unattend.xml', '\$sourceFolder\sysprep-unattend.xml')
     \$scriptsDir = \$root.AddDirectory('Windows')
     \$scriptsDir = \$scriptsDir.AddDirectory('Setup')
     \$scriptsDir = \$scriptsDir.AddDirectory('Scripts')
     \$scriptsDir.AddFile('\$sourceFolder\install-cloudbase.ps1', '\$sourceFolder\install-cloudbase.ps1')
-    \$sysprepDir = \$root.AddDirectory('Windows')
-    \$sysprepDir = \$sysprepDir.AddDirectory('System32')
-    \$sysprepDir = \$sysprepDir.AddDirectory('Sysprep')
-    \$sysprepDir.AddFile('\$sourceFolder\sysprep-unattend.xml', '\$sourceFolder\sysprep-unattend.xml')
     \$stream = [System.IO.File]::OpenWrite(\$isoPath)
     \$iso.WriteToStream(\$stream)
     \$stream.Close()
@@ -357,7 +363,8 @@ echo ""
 echo "========================================="
 echo "Starting QEMU installation..."
 echo "This will take 20-40 minutes"
-echo "Windows Update has been disabled to prevent Sysprep errors"
+echo "Microsoft account login has been bypassed"
+echo "Local Administrator account will be used"
 echo "========================================="
 echo ""
 
@@ -397,7 +404,7 @@ qemu-img convert -c -O qcow2 "$OUTPUT_QCOW2" "$TEMPLATE"
 
 # ----- 8. Cleanup -----
 rm -rf "$WORK_DIR"
-rm -f "$ANSWERFILE" "$POWERSHELL_SCRIPT" "$SCRIPT_DIR/sysprep-unattend.xml"
+rm -f "$ANSWERFILE" "$POWERSHELL_SCRIPT"
 
 echo ""
 echo "============================================="
