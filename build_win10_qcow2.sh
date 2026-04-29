@@ -1,5 +1,6 @@
 #!/bin/bash
-# build_win10_qcow2.sh - Bypasses Microsoft account requirement
+# build_win10_qcow2.sh - Updated with enhanced OOBE bypass and Windows compatibility
+# Run with: sudo ./build_win10_qcow2.sh (on Linux/WSL)
 
 set -euo pipefail
 
@@ -11,116 +12,129 @@ RAM_MB="8192"
 CPU_CORES="6"
 ADMIN_PASSWORD="Password123!"
 
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+echo_color() {
+    echo -e "${2}${1}${NC}"
+}
+
 # ----- Find QEMU installation -----
 QEMU_PATH=""
 if command -v qemu-system-x86_64 &> /dev/null; then
     QEMU_PATH="qemu-system-x86_64"
-elif [ -f "/c/Program Files/qemu/qemu-system-x86_64.exe" ]; then
-    QEMU_PATH="/c/Program Files/qemu/qemu-system-x86_64.exe"
-elif [ -f "/c/Program Files (x86)/qemu/qemu-system-x86_64.exe" ]; then
-    QEMU_PATH="/c/Program Files (x86)/qemu/qemu-system-x86_64.exe"
+elif [ -f "/usr/bin/qemu-system-x86_64" ]; then
+    QEMU_PATH="/usr/bin/qemu-system-x86_64"
+elif [ -f "/usr/local/bin/qemu-system-x86_64" ]; then
+    QEMU_PATH="/usr/local/bin/qemu-system-x86_64"
 else
-    echo "ERROR: QEMU not found. Please install QEMU first."
+    echo_color "ERROR: QEMU not found. Please install QEMU first." "$RED"
+    echo "Ubuntu/Debian: sudo apt install qemu-system-x86 qemu-utils genisoimage"
+    echo "RHEL/CentOS: sudo yum install qemu-kvm qemu-img genisoimage"
     exit 1
 fi
 
-echo "Using QEMU: $QEMU_PATH"
+echo_color "Using QEMU: $QEMU_PATH" "$GREEN"
 
 # ----- Create working directory -----
 WORK_DIR=$(mktemp -d)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ANSWERFILE="$SCRIPT_DIR/autounattend.xml"
-POWERSHELL_SCRIPT="$SCRIPT_DIR/install-cloudbase.ps1"
-VIRTIO_WIN_ISO="virtio-win.iso"
+ANSWERFILE="$WORK_DIR/autounattend.xml"
+SETUP_SCRIPT="$WORK_DIR/SetupComplete.ps1"
+VIRTIO_WIN_ISO="$SCRIPT_DIR/virtio-win.iso"
+
+echo_color "Working directory: $WORK_DIR" "$CYAN"
 
 # Check for virtio-win.iso
 if [ ! -f "$VIRTIO_WIN_ISO" ]; then
-    echo "NOTE: virtio-win.iso not found. This is optional - Windows will use IDE drivers."
+    echo_color "NOTE: virtio-win.iso not found. This is optional - Windows will use IDE drivers." "$YELLOW"
+    echo "Download from: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
     VIRTIO_WIN_ISO=""
 fi
 
 # ----- Sanity checks -----
 if [ ! -f "$ISO_PATH" ]; then
-    echo "ERROR: ISO not found at $ISO_PATH"
+    echo_color "ERROR: ISO not found at $ISO_PATH" "$RED"
     echo "Current directory: $(pwd)"
     ls -la *.iso 2>/dev/null || echo "No ISO files found"
     exit 1
 fi
 
 # ----- 1. Create the QCOW2 disk -----
-echo "Creating QCOW2 disk: $OUTPUT_QCOW2 ($DISK_SIZE)"
+echo_color "Creating QCOW2 disk: $OUTPUT_QCOW2 ($DISK_SIZE)" "$CYAN"
 qemu-img create -f qcow2 "$OUTPUT_QCOW2" "$DISK_SIZE"
 
-# ----- 2. Generate the PowerShell script -----
-cat > "$POWERSHELL_SCRIPT" << 'EOF'
-# install-cloudbase.ps1 - First boot script
+# ----- 2. Generate SetupComplete.ps1 script -----
+cat > "$SETUP_SCRIPT" << 'EOF'
+# SetupComplete.ps1 - Runs at end of Windows setup
+Start-Transcript -Path "C:\Windows\Temp\SetupComplete.log"
 
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "Starting Windows Image Preparation" -ForegroundColor Cyan
+Write-Host "SetupComplete script running..." -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
-# ----- Disable Windows Update and related services -----
-Write-Host "Disabling Windows Update services..." -ForegroundColor Yellow
+# Wait for system to be ready
+Write-Host "Waiting 60 seconds for system to stabilize..." -ForegroundColor Yellow
+Start-Sleep -Seconds 60
 
-$servicesToDisable = @(
-    "wuauserv",
-    "UsoSvc",
-    "WaaSMedicSvc",
-    "bits",
-    "DoSvc",
-    "TrustedInstaller"
-)
-
-foreach ($service in $servicesToDisable) {
-    Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
-    Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue
-    Write-Host "  Disabled: $service"
+# Disable Windows Update completely
+Write-Host "Disabling Windows Update..." -ForegroundColor Yellow
+$services = @("wuauserv", "UsoSvc", "WaaSMedicSvc", "bits", "DoSvc")
+foreach ($svc in $services) {
+    Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+    Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+    Write-Host "  Disabled: $svc"
 }
 
-# Disable automatic updates via registry
+# Disable updates via registry
 Write-Host "Disabling automatic updates via registry..." -ForegroundColor Yellow
 New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Force | Out-Null
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -Value 1 -Type DWord -Force
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "AUOptions" -Value 1 -Type DWord -Force
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" -Name "AUOptions" -Value 1 -Type DWord -Force
 
-# Stop Windows Update background processes
-Get-Process -Name "TrustedInstaller" -ErrorAction SilentlyContinue | Stop-Process -Force
-Get-Process -Name "wuauclt" -ErrorAction SilentlyContinue | Stop-Process -Force
+# Prevent automatic reboots
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "NoAutoRebootWithLoggedOnUsers" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 
-Write-Host "Windows Update has been disabled." -ForegroundColor Green
-
-# ----- Clean temporary files -----
-Write-Host "Cleaning temporary files..." -ForegroundColor Yellow
-Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
-
-# ----- Install Cloudbase-Init -----
+# Install Cloudbase-Init
 Write-Host "Downloading Cloudbase-Init..." -ForegroundColor Yellow
 $url = "https://cloudbase.it/downloads/CloudbaseInitSetup_Stable_x64.msi"
 $output = "$env:TEMP\CloudbaseInitSetup.msi"
-Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
+try {
+    Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing -TimeoutSec 300
+    Write-Host "Download completed successfully" -ForegroundColor Green
+} catch {
+    Write-Host "Failed to download Cloudbase-Init: $_" -ForegroundColor Red
+}
 
-Write-Host "Installing Cloudbase-Init..." -ForegroundColor Yellow
-$process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$output`" /quiet /norestart LOGGINGLEVEL=3 Username=`"Administrator`" RunCloudbaseInitServiceAsLocalSystem=1" -Wait -PassThru
+if (Test-Path $output) {
+    Write-Host "Installing Cloudbase-Init..." -ForegroundColor Yellow
+    $msiArgs = "/i `"$output`" /quiet /norestart LOGGINGLEVEL=3 Username=`"Administrator`" RunCloudbaseInitServiceAsLocalSystem=1"
+    Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -NoNewWindow
+    Write-Host "Cloudbase-Init installed" -ForegroundColor Green
+    Start-Sleep -Seconds 10
+}
 
-Start-Sleep -Seconds 5
-
-# ----- Configure Administrator account -----
+# Configure Administrator account
 Write-Host "Configuring Administrator account..." -ForegroundColor Yellow
 net user Administrator "Password123!" /logonpasswordchg:no 2>$null
-wmic UserAccount where "Name='Administrator'" set PasswordExpires=False 2>$null
-
-# Enable Administrator account (in case it's disabled)
 net user Administrator /active:yes 2>$null
+Write-Host "Administrator account configured" -ForegroundColor Green
 
-# ----- Configure WinRM -----
+# Disable UAC completely
+Write-Host "Disabling UAC..." -ForegroundColor Yellow
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "EnableLUA" -Value 0 -Type DWord -Force
+
+# Configure WinRM
 Write-Host "Configuring WinRM..." -ForegroundColor Yellow
 winrm quickconfig -q -force 2>$null
 winrm set winrm/config/service/auth '@{Basic="true"}' 2>$null
 winrm set winrm/config/service '@{AllowUnencrypted="true"}' 2>$null
 
-# ----- Configure cloudbase-init -----
+# Configure cloudbase-init
 Write-Host "Configuring cloudbase-init..." -ForegroundColor Yellow
 $conf = "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\cloudbase-init.conf"
 if (Test-Path $conf) {
@@ -131,38 +145,31 @@ if (Test-Path $conf) {
     Add-Content $conf "`nadmin_password=Password123!"
     Add-Content $conf "`nallow_reboot=false"
     Add-Content $conf "`nstop_service_on_exit=false"
+    Write-Host "Cloudbase-init configured" -ForegroundColor Green
 }
 
 # Restart service
 Restart-Service CloudbaseInit -ErrorAction SilentlyContinue
 
-# ----- Final cleanup before Sysprep -----
-Write-Host "Performing final cleanup before Sysprep..." -ForegroundColor Yellow
-
-# Clear event logs
+# Cleanup before Sysprep
+Write-Host "Cleaning up before Sysprep..." -ForegroundColor Yellow
 wevtutil el | ForEach-Object { wevtutil cl $_ 2>$null }
-
-# Clear Windows Update logs
-Remove-Item -Path "C:\Windows\Logs\WindowsUpdate\*" -Force -ErrorAction SilentlyContinue
-
-# Clear CBS logs
-Remove-Item -Path "C:\Windows\Logs\CBS\*" -Force -ErrorAction SilentlyContinue
-
-# Disable hibernation
 powercfg -h off
-
-# Reduce page file
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "PagingFiles" -Value "C:\pagefile.sys 256 256" -Force
 
 # Remove pending reboot flags
 Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" -Name "RebootRequired" -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name "PendingFileRenameOperations" -ErrorAction SilentlyContinue
 
-# Wait for any pending operations to complete
-Write-Host "Waiting for pending operations to complete..." -ForegroundColor Yellow
-Start-Sleep -Seconds 10
+# Remove Panther directory (setup logs)
+Remove-Item -Path "C:\Windows\Panther\*" -Recurse -Force -ErrorAction SilentlyContinue
 
-# ----- Run Sysprep -----
+Write-Host "Cleanup completed" -ForegroundColor Green
+
+# Final wait before Sysprep
+Write-Host "Waiting 15 seconds before Sysprep..." -ForegroundColor Yellow
+Start-Sleep -Seconds 15
+
+# Run Sysprep
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "Running Sysprep to generalize the image..." -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
@@ -179,6 +186,7 @@ try {
     } else {
         Write-Host "Sysprep exited with code: $($process.ExitCode)" -ForegroundColor Red
         
+        # Check Sysprep logs
         $sysprepLog = "$env:SystemRoot\System32\Sysprep\Panther\setupact.log"
         if (Test-Path $sysprepLog) {
             Write-Host "Last 20 lines of Sysprep log:" -ForegroundColor Yellow
@@ -189,10 +197,11 @@ try {
     Write-Host "Sysprep execution failed: $_" -ForegroundColor Red
 }
 
-Write-Host "VM will now shut down." -ForegroundColor Green
+Write-Host "SetupComplete finished. VM will now shut down." -ForegroundColor Green
+Stop-Transcript
 EOF
 
-# ----- 3. Generate autounattend.xml with Microsoft account bypass -----
+# ----- 3. Generate autounattend.xml with enhanced OOBE section -----
 cat > "$ANSWERFILE" << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -233,12 +242,6 @@ cat > "$ANSWERFILE" << 'EOF'
             </DiskConfiguration>
             <ImageInstall>
                 <OSImage>
-                    <InstallFrom>
-                        <MetaData wcm:action="add">
-                            <Key>/IMAGE/INDEX</Key>
-                            <Value>1</Value>
-                        </MetaData>
-                    </InstallFrom>
                     <InstallTo>
                         <DiskID>0</DiskID>
                         <PartitionID>2</PartitionID>
@@ -261,19 +264,11 @@ cat > "$ANSWERFILE" << 'EOF'
                 <SkipUserOOBE>true</SkipUserOOBE>
                 <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
                 <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-                <HideLocalAccountScreen>false</HideLocalAccountScreen>
-                <ProtectYourPC>1</ProtectYourPC>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <SkipFirstLogonTasks>true</SkipFirstLogonTasks>
+                <ProtectYourPC>3</ProtectYourPC>
                 <NetworkLocation>Work</NetworkLocation>
             </OOBE>
-            <AutoLogon>
-                <Enabled>true</Enabled>
-                <Username>Administrator</Username>
-                <Password>
-                    <Value>Password123!</Value>
-                    <PlainText>true</PlainText>
-                </Password>
-                <LogonCount>2</LogonCount>
-            </AutoLogon>
             <UserAccounts>
                 <AdministratorPassword>
                     <Value>Password123!</Value>
@@ -292,13 +287,22 @@ cat > "$ANSWERFILE" << 'EOF'
                     </LocalAccount>
                 </LocalAccounts>
             </UserAccounts>
+            <AutoLogon>
+                <Enabled>true</Enabled>
+                <Username>Administrator</Username>
+                <Password>
+                    <Value>Password123!</Value>
+                    <PlainText>true</PlainText>
+                </Password>
+                <LogonCount>999</LogonCount>
+            </AutoLogon>
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>cmd.exe /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableFirstLogonAnimation /t REG_DWORD /d 0 /f</CommandLine>
+                    <CommandLine>cmd.exe /c mkdir C:\Windows\Setup\Scripts</CommandLine>
                     <Order>1</Order>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell.exe -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\install-cloudbase.ps1"</CommandLine>
+                    <CommandLine>powershell.exe -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\SetupComplete.ps1"</CommandLine>
                     <Description>Install Cloudbase-Init and Sysprep</Description>
                     <Order>2</Order>
                 </SynchronousCommand>
@@ -332,50 +336,86 @@ cat > "$ANSWERFILE" << 'EOF'
 </unattend>
 EOF
 
-# Convert to Windows line endings
-sed -i 's/$/\r/' "$ANSWERFILE" 2>/dev/null || echo ""
+# ----- 4. Create a bootable ISO with the answer files -----
+echo_color "Creating answer ISO..." "$CYAN"
 
-# ----- 4. Create answer ISO -----
-echo "Creating answer ISO..."
+ISO_DIR="$WORK_DIR/iso_source"
+mkdir -p "$ISO_DIR/Windows/Setup/Scripts"
+
+cp "$ANSWERFILE" "$ISO_DIR/autounattend.xml"
+cp "$SETUP_SCRIPT" "$ISO_DIR/Windows/Setup/Scripts/SetupComplete.ps1"
+
 ANSWER_ISO="$WORK_DIR/answer.iso"
-powershell.exe -Command "
-    \$isoPath = '$ANSWER_ISO'
-    \$sourceFolder = '$SCRIPT_DIR'
-    \$iso = New-Object -ComObject IMAPI2FS.MsftIsoImage
-    \$iso.VolumeName = 'AUTORUN'
-    \$root = \$iso.Root
-    \$root.AddFile('\$sourceFolder\autounattend.xml', '\$sourceFolder\autounattend.xml')
-    \$scriptsDir = \$root.AddDirectory('Windows')
-    \$scriptsDir = \$scriptsDir.AddDirectory('Setup')
-    \$scriptsDir = \$scriptsDir.AddDirectory('Scripts')
-    \$scriptsDir.AddFile('\$sourceFolder\install-cloudbase.ps1', '\$sourceFolder\install-cloudbase.ps1')
-    \$stream = [System.IO.File]::OpenWrite(\$isoPath)
-    \$iso.WriteToStream(\$stream)
-    \$stream.Close()
-    Write-Host 'ISO created successfully'
-" 2>/dev/null || {
-    echo "PowerShell ISO creation failed"
-    exit 1
-}
+
+# Try to create ISO using available tools
+ISO_CREATED=false
+
+# Method 1: Try genisoimage
+if command -v genisoimage &> /dev/null; then
+    echo_color "Creating ISO with genisoimage..." "$YELLOW"
+    genisoimage -o "$ANSWER_ISO" -V "AUTORUN" -J -r "$ISO_DIR" 2>/dev/null
+    if [ -f "$ANSWER_ISO" ] && [ $(stat -c%s "$ANSWER_ISO") -gt 1024 ]; then
+        ISO_CREATED=true
+        echo_color "ISO created with genisoimage" "$GREEN"
+    fi
+fi
+
+# Method 2: Try mkisofs
+if [ "$ISO_CREATED" = false ] && command -v mkisofs &> /dev/null; then
+    echo_color "Creating ISO with mkisofs..." "$YELLOW"
+    mkisofs -o "$ANSWER_ISO" -V "AUTORUN" -J -r "$ISO_DIR" 2>/dev/null
+    if [ -f "$ANSWER_ISO" ] && [ $(stat -c%s "$ANSWER_ISO") -gt 1024 ]; then
+        ISO_CREATED=true
+        echo_color "ISO created with mkisofs" "$GREEN"
+    fi
+fi
+
+# Method 3: Use xorriso
+if [ "$ISO_CREATED" = false ] && command -v xorriso &> /dev/null; then
+    echo_color "Creating ISO with xorriso..." "$YELLOW"
+    xorriso -as mkisofs -o "$ANSWER_ISO" -V "AUTORUN" -J -r "$ISO_DIR" 2>/dev/null
+    if [ -f "$ANSWER_ISO" ] && [ $(stat -c%s "$ANSWER_ISO") -gt 1024 ]; then
+        ISO_CREATED=true
+        echo_color "ISO created with xorriso" "$GREEN"
+    fi
+fi
+
+# Fallback: Use folder method
+if [ "$ISO_CREATED" = false ]; then
+    echo_color "WARNING: Could not create ISO. Using folder method." "$YELLOW"
+    ANSWER_ISO="$ISO_DIR"
+fi
 
 # ----- 5. Launch QEMU -----
 echo ""
-echo "========================================="
-echo "Starting QEMU installation..."
-echo "This will take 20-40 minutes"
-echo "Microsoft account login has been bypassed"
-echo "Local Administrator account will be used"
-echo "========================================="
+echo_color "=========================================" "$CYAN"
+echo_color "Starting QEMU installation..." "$CYAN"
+echo_color "This will take 30-60 minutes" "$YELLOW"
+echo_color "OOBE has been fully bypassed (fix for OOBEZDP/OOBEKEYBOARD)" "$GREEN"
+echo_color "Microsoft account login has been bypassed" "$GREEN"
+echo_color "Local Administrator account will be used" "$GREEN"
+echo_color "=========================================" "$CYAN"
 echo ""
 
+# Check if KVM is available
+KVM_ACCEL=""
+if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+    KVM_ACCEL="-enable-kvm"
+    echo_color "KVM acceleration enabled (faster installation)" "$GREEN"
+else
+    echo_color "KVM not available (installation will be slower)" "$YELLOW"
+fi
+
 # Build QEMU command
-QEMU_CMD="\"$QEMU_PATH\" -cpu qemu64 -smp $CPU_CORES -m $RAM_MB \
-    -drive file=\"$OUTPUT_QCOW2\",format=qcow2,if=ide,index=0 \
+QEMU_CMD="$QEMU_PATH $KVM_ACCEL -cpu host -smp $CPU_CORES -m $RAM_MB \
+    -drive file=$OUTPUT_QCOW2,format=qcow2,if=ide,index=0 \
     -drive file=\"$ISO_PATH\",format=raw,if=ide,index=1,media=cdrom"
 
-# Add answer ISO
+# Add answer ISO/folder (using index 2)
 if [ -f "$ANSWER_ISO" ]; then
     QEMU_CMD="$QEMU_CMD -drive file=\"$ANSWER_ISO\",format=raw,if=ide,index=2,media=cdrom"
+elif [ -d "$ANSWER_ISO" ]; then
+    QEMU_CMD="$QEMU_CMD -drive file=fat:ro:\"$ANSWER_ISO\",format=raw,if=ide,index=2,media=cdrom"
 fi
 
 # Add virtio-win ISO if available
@@ -386,32 +426,37 @@ fi
 # Windows-optimized flags
 QEMU_CMD="$QEMU_CMD -vga qxl -display gtk -machine type=pc -usb -device usb-tablet -rtc base=localtime"
 
-echo "Running: $QEMU_CMD"
+echo_color "Running QEMU..." "$GREEN"
+echo_color "Command: $QEMU_CMD" "$GRAY"
 echo ""
 
+# Execute QEMU
 eval "$QEMU_CMD"
 
 # ----- 6. Wait for completion -----
-echo "Waiting for Windows installation and Sysprep to finish..."
+echo_color "Waiting for Windows installation and Sysprep to finish..." "$CYAN"
 while pgrep -f "qemu-system-x86_64" > /dev/null; do
     sleep 10
+    echo -n "."
 done
+echo ""
 
 # ----- 7. Compress the final image -----
-echo "Compressing final template..."
-TEMPLATE="${OUTPUT_QCOW2%.qcow2}-template.qcow2"
+echo_color "Compressing final template..." "$CYAN"
+TEMPLATE="${OUTPUT_QCOW2%.qcow2}-final-template.qcow2"
 qemu-img convert -c -O qcow2 "$OUTPUT_QCOW2" "$TEMPLATE"
 
 # ----- 8. Cleanup -----
+echo_color "Cleaning up temporary files..." "$GRAY"
 rm -rf "$WORK_DIR"
-rm -f "$ANSWERFILE" "$POWERSHELL_SCRIPT"
 
 echo ""
-echo "============================================="
-echo "SUCCESS!"
-echo "Final image: $TEMPLATE"
-echo "Administrator password: $ADMIN_PASSWORD"
+echo_color "=============================================" "$GREEN"
+echo_color "SUCCESS!" "$GREEN"
+echo_color "=============================================" "$GREEN"
+echo_color "Final image: $TEMPLATE" "$WHITE"
+echo_color "Administrator password: $ADMIN_PASSWORD" "$WHITE"
 echo ""
-echo "To test the image:"
-echo "\"$QEMU_PATH\" -m 4096 -drive file=$TEMPLATE,format=qcow2,if=ide -vga qxl -display gtk"
-echo "============================================="
+echo_color "To test the image:" "$YELLOW"
+echo_color "$QEMU_PATH -m 4096 -drive file=$TEMPLATE,format=qcow2,if=ide -vga qxl -display gtk" "$WHITE"
+echo_color "=============================================" "$GREEN"
