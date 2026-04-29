@@ -298,16 +298,27 @@ echo_color "Running QEMU..." "$GREEN"
 echo -e "Command: ${CYAN}$QEMU_PATH_WIN ${qemu_args[*]}${NC}"
 echo ""
 
-# Execute QEMU using array expansion
-"$QEMU_PATH_WIN" "${qemu_args[@]}"
+# Execute QEMU in background and capture PID
+"$QEMU_PATH_WIN" "${qemu_args[@]}" &
+QEMU_PID=$!
 
-# ----- 6. Wait for completion -----
+echo_color "QEMU PID: $QEMU_PID" "$CYAN"
+
+# ----- 6. Wait for completion using Windows tasklist command -----
 echo_color "Waiting for Windows installation and Sysprep to finish..." "$CYAN"
-while pgrep -f "qemu-system-x86_64" > /dev/null; do
-    sleep 10
-    echo -n "."
+echo_color "This will take 2-3 hours. Please be patient..." "$YELLOW"
+
+while true; do
+    # Check if process is still running using Windows tasklist
+    if tasklist 2>/dev/null | grep -q "qemu-system-x86_64.exe"; then
+        echo -n "."
+        sleep 30
+    else
+        echo ""
+        echo_color "QEMU process has exited." "$GREEN"
+        break
+    fi
 done
-echo ""
 
 # ----- 7. Compress the final image -----
 echo_color "Compressing final template..." "$CYAN"
